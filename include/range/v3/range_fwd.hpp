@@ -14,6 +14,7 @@
 #ifndef RANGES_V3_RANGE_FWD_HPP
 #define RANGES_V3_RANGE_FWD_HPP
 
+#include <climits>
 #include <utility>
 #include <type_traits>
 #include <meta/meta.hpp>
@@ -78,7 +79,7 @@ namespace ranges
         struct common_type;
 
         template<typename ...Ts>
-        using common_type_t = typename common_type<Ts...>::type;
+        using common_type_t = meta::eval<common_type<Ts...>>;
 
         template<typename T, typename U, typename TQual, typename UQual>
         struct common_reference_base;
@@ -87,10 +88,10 @@ namespace ranges
         struct common_reference;
 
         template<typename ...Ts>
-        using common_reference_t = typename common_reference<Ts...>::type;
+        using common_reference_t = meta::eval<common_reference<Ts...>>;
 
         template<typename Sig>
-        using result_of_t = typename std::result_of<Sig>::type;
+        using result_of_t = meta::eval<std::result_of<Sig>>;
 
         struct make_pipeable_fn;
 
@@ -133,14 +134,19 @@ namespace ranges
 
         struct iter_size_fn;
 
-        template<typename T>
+        template<typename T, typename = void>
         struct difference_type;
 
-        struct view_base
-        {};
+        template<typename T, typename = void>
+        struct value_type;
 
-        template<bool Inf>
-        struct basic_range : view_base
+        template<typename T, typename = void>
+        struct iterator_category;
+
+        template<typename T>
+        struct size_type;
+
+        struct view_base
         {};
 
         /// \cond
@@ -177,13 +183,13 @@ namespace ranges
             struct make_compressed_pair_fn;
 
             template<typename T>
-            constexpr T && forward(typename std::remove_reference<T>::type & t) noexcept
+            constexpr T && forward(meta::eval<std::remove_reference<T>> & t) noexcept
             {
                 return static_cast<T &&>(t);
             }
 
             template<typename T>
-            constexpr T && forward(typename std::remove_reference<T>::type && t) noexcept
+            constexpr T && forward(meta::eval<std::remove_reference<T>> && t) noexcept
             {
                 // This is to catch way sketchy stuff like: forward<int const &>(42)
                 static_assert(!std::is_lvalue_reference<T>::value, "You didn't just do that!");
@@ -191,30 +197,24 @@ namespace ranges
             }
 
             template<typename T>
-            constexpr typename std::remove_reference<T>::type &&
+            constexpr meta::eval<std::remove_reference<T>> &&
             move(T && t) noexcept
             {
-                return static_cast<typename std::remove_reference<T>::type &&>(t);
+                return static_cast<meta::eval<std::remove_reference<T>> &&>(t);
             }
 
             template<typename T>
-            using decay_t = typename std::decay<T>::type;
+            using decay_t = meta::eval<std::decay<T>>;
 
             template<typename T>
             using as_ref_t =
-                typename std::add_lvalue_reference<
-                    typename std::remove_const<
-                        typename std::remove_reference<T>::type
-                    >::type
-                >::type;
+                meta::eval<std::add_lvalue_reference<
+                    meta::eval<std::remove_const<meta::eval<std::remove_reference<T>>>>>>;
 
             template<typename T>
             using as_cref_t =
-                typename std::add_lvalue_reference<
-                    typename std::add_const<
-                        typename std::remove_reference<T>::type
-                    >::type
-                >::type;
+                meta::eval<std::add_lvalue_reference<
+                    meta::eval<std::add_const<meta::eval<std::remove_reference<T>>>>>>;
 
             struct get_first;
             struct get_second;
@@ -231,7 +231,7 @@ namespace ranges
             template<typename I, typename S>
             struct common_cursor;
 
-            template<typename I, typename D = typename difference_type<I>::type>
+            template<typename I, typename D = meta::eval<difference_type<I>>>
             struct counted_cursor;
 
             struct counted_sentinel;
@@ -274,7 +274,7 @@ namespace ranges
             };
 
             template<typename T>
-            using remove_rvalue_reference_t = typename remove_rvalue_reference<T>::type;
+            using remove_rvalue_reference_t = meta::eval<remove_rvalue_reference<T>>;
         }
         /// \endcond
 
@@ -290,19 +290,30 @@ namespace ranges
         struct move_tag {};
 
         template<typename T>
-        struct iterator_category_type;
-
-        template<typename T>
         using uncvref_t =
-            typename std::remove_cv<typename std::remove_reference<T>::type>::type;
+            meta::eval<std::remove_cv<meta::eval<std::remove_reference<T>>>>;
 
         struct equal_to;
         struct less;
         struct ordered_less;
         struct ident;
 
+        enum cardinality
+        {
+            infinite = -3,
+            unknown = -2,
+            finite = -1,
+            _max_ = INT_MAX
+        };
+
         template<typename Rng, typename Void = void>
-        struct is_infinite;
+        struct range_cardinality;
+
+        template<typename Rng>
+        using is_finite = meta::bool_<range_cardinality<Rng>::value >= finite>;
+
+        template<typename Rng>
+        using is_infinite = meta::bool_<range_cardinality<Rng>::value == infinite>;
 
         template<typename T, typename Enable = void>
         struct is_view;
@@ -319,20 +330,21 @@ namespace ranges
         template<typename S>
         struct basic_sentinel;
 
-        template<typename Derived, bool Inf = false>
-        struct range_facade;
+        template<cardinality>
+        struct basic_view : view_base
+        {};
+
+        template<typename Derived, cardinality C = finite>
+        struct view_facade;
 
         template<typename Derived,
                  typename BaseRng,
-                 bool Inf = is_infinite<BaseRng>::value>
-        struct range_adaptor;
+                 cardinality C = range_cardinality<BaseRng>::value>
+        struct view_adaptor;
 
         template<typename I, typename S>
         using common_iterator =
-            typename std::conditional<
-                std::is_same<I, S>::value,
-                I,
-                basic_iterator<detail::common_cursor<I, S>>>::type;
+            meta::if_<std::is_same<I, S>, I, basic_iterator<detail::common_cursor<I, S>>>;
 
         template<typename First, typename Second>
         struct compressed_pair;
@@ -342,8 +354,8 @@ namespace ranges
 
         struct as_function_fn;
 
-        template<typename Derived, bool Inf = false>
-        struct range_interface;
+        template<typename Derived, cardinality = finite>
+        struct view_interface;
 
         template<typename T>
         struct istream_range;
@@ -396,7 +408,7 @@ namespace ranges
             struct const_fn;
         }
 
-        template<typename I, typename D = typename difference_type<I>::type>
+        template<typename I, typename D = meta::eval<difference_type<I>>>
         struct counted_view;
 
         namespace view
@@ -404,7 +416,7 @@ namespace ranges
             struct counted_fn;
         }
 
-        template<typename I, typename D = typename difference_type<I>::type>
+        template<typename I, typename D = meta::eval<difference_type<I>>>
         using counted_iterator =
             basic_iterator<detail::counted_cursor<I, D>, detail::counted_sentinel>;
 
@@ -560,10 +572,10 @@ namespace ranges
             struct take_exactly_fn;
         }
 
-        template<typename Rng, typename Pred, bool Inf = is_infinite<Rng>::value>
+        template<typename Rng, typename Pred>
         struct iter_take_while_view;
 
-        template<typename Rng, typename Pred, bool Inf = is_infinite<Rng>::value>
+        template<typename Rng, typename Pred>
         struct take_while_view;
 
         namespace view
